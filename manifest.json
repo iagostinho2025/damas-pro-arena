@@ -1,0 +1,12 @@
+﻿{
+  "name": "Damas Pro Arena",
+  "short_name": "Damas Pro",
+  "description": "Estrutura inicial do jogo web Damas Pro Arena",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#111827",
+  "theme_color": "#1f2937",
+  "lang": "pt-BR",
+  "icons": []
+}
