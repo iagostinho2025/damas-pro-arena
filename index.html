@@ -20,10 +20,10 @@
       </header>
 
       <section class="menu-actions">
-        <button id="btn-play" class="btn btn-menu btn-menu-sprite btn-menu-jogar" aria-label="Jogar"></button>
-        <button id="btn-resume" class="btn btn-menu btn-menu-sprite btn-menu-continuar" aria-label="Continuar último jogo"></button>
-        <button id="btn-rules" class="btn btn-menu btn-menu-sprite btn-menu-regras" aria-label="Abrir regras"></button>
-        <button id="btn-difficulty" class="btn btn-menu btn-menu-sprite btn-menu-dificuldade" aria-label="Abrir dificuldade"></button>
+        <button id="btn-play" class="btn btn-menu btn-menu-sprite btn-menu-jogar" aria-label="Jogar vs CPU"></button>
+        <button id="btn-resume" class="btn btn-menu btn-menu-sprite btn-menu-continuar" aria-label="Jogar online"></button>
+        <button id="btn-rules" class="btn btn-menu btn-menu-sprite btn-menu-regras" aria-label="Jogar com amigos"></button>
+        <button id="btn-difficulty" class="btn btn-menu btn-menu-sprite btn-menu-dificuldade" aria-label="Jogar torneio"></button>
       </section>
 
       <nav class="bottom-nav" aria-label="Atalhos do menu">
@@ -73,16 +73,60 @@
       </div>
     </section>
 
-    <section id="screen-vs-ai" class="screen screen-panel" aria-label="Jogar versus IA">
-      <header class="panel-header">
-        <h2>Jogar vs IA</h2>
-        <p>Ajuste os parâmetros e inicie a partida.</p>
-      </header>
+    <section id="screen-vs-ai" class="screen screen-panel screen-vsai" aria-label="Jogar versus CPU">
+      <div class="vsai-frame">
+        <header class="panel-header vsai-header">
+          <h2>Jogar vs CPU</h2>
+          <p>Ajuste os parâmetros e inicie a partida.</p>
+        </header>
 
-      <div class="panel-actions">
-        <button id="btn-vsai-difficulty" class="btn btn-secondary">Dificuldade: Médio</button>
-        <button id="btn-vsai-start" class="btn btn-primary">Iniciar Partida</button>
-        <button id="btn-vsai-back" class="btn btn-soft">Voltar ao Menu</button>
+        <section class="vsai-config">
+          <article class="vsai-group">
+            <h3 class="vsai-group-title">Dificuldade</h3>
+            <div class="vsai-row vsai-row-4">
+              <button id="btn-vsai-difficulty-easy" class="btn option-btn vsai-choice" type="button" data-icon="🙂">Fácil</button>
+              <button id="btn-vsai-difficulty-medium" class="btn option-btn vsai-choice" type="button" data-icon="⚖">Médio</button>
+              <button id="btn-vsai-difficulty-hard" class="btn option-btn vsai-choice" type="button" data-icon="🔥">Difícil</button>
+              <button id="btn-vsai-difficulty-expert" class="btn option-btn vsai-choice" type="button" data-icon="🧠">Expert</button>
+            </div>
+          </article>
+
+          <article class="vsai-group">
+            <h3 class="vsai-group-title">Quem começa</h3>
+            <div class="vsai-row vsai-row-3">
+              <button id="btn-vsai-starter-player" class="btn option-btn vsai-choice" type="button" data-icon="✅">Você</button>
+              <button id="btn-vsai-starter-random" class="btn option-btn vsai-choice" type="button" data-icon="🎲">Aleatório</button>
+              <button id="btn-vsai-starter-cpu" class="btn option-btn vsai-choice" type="button" data-icon="🤖">CPU</button>
+            </div>
+          </article>
+
+          <article class="vsai-group">
+            <h3 class="vsai-group-title">Regras</h3>
+            <div class="vsai-row vsai-row-2">
+              <button id="btn-vsai-rule-brazilian" class="btn option-btn vsai-choice vsai-choice-flag" type="button">
+                <span class="vsai-flag vsai-flag-br" aria-hidden="true"></span>
+                <span>Brasileiro</span>
+              </button>
+              <button id="btn-vsai-rule-american" class="btn option-btn vsai-choice vsai-choice-flag" type="button">
+                <span class="vsai-flag vsai-flag-us" aria-hidden="true"></span>
+                <span>Americano</span>
+              </button>
+            </div>
+          </article>
+
+          <article class="vsai-group">
+            <h3 class="vsai-group-title">Cor das peças</h3>
+            <div class="vsai-row vsai-row-2">
+              <button id="btn-vsai-color-light" class="btn option-btn vsai-choice" type="button" data-icon="⚪">Claras</button>
+              <button id="btn-vsai-color-dark" class="btn option-btn vsai-choice" type="button" data-icon="⚫">Escuras</button>
+            </div>
+          </article>
+        </section>
+
+        <div class="panel-actions vsai-actions">
+          <button id="btn-vsai-start" class="btn btn-primary vsai-start">Iniciar Partida</button>
+          <button id="btn-vsai-back" class="btn btn-soft vsai-back">Voltar ao Menu</button>
+        </div>
       </div>
     </section>
 
@@ -148,6 +192,10 @@
         <button id="btn-difficulty-hard" class="btn btn-secondary option-btn option-card">
           <strong>Difícil</strong>
           <span>IA mais agressiva e calculista.</span>
+        </button>
+        <button id="btn-difficulty-expert" class="btn btn-secondary option-btn option-card">
+          <strong>Expert</strong>
+          <span>Profundidade de busca mais alta.</span>
         </button>
       </section>
 

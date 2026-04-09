@@ -1,4 +1,4 @@
-const SPRITES = Object.freeze({
+﻿const SPRITES = Object.freeze({
   white: {
     man: './assets/img/piece_white.webp',
     king: './assets/img/piece_white_king.webp',
@@ -40,21 +40,24 @@ export class BoardUI {
     });
   }
 
-  render({ board, selected, highlightedMoves, effects = null }) {
+  render({ board, selected, highlightedMoves, effects = null, orientation = 'white' }) {
     this.boardEl.innerHTML = '';
 
     const selectedKey = selected ? keyOf(selected[0], selected[1]) : null;
     const moveMap = new Map(
       highlightedMoves.map((mv) => [keyOf(mv.to[0], mv.to[1]), mv])
     );
+    const isFlipped = orientation === 'black';
 
-    for (let row = 0; row < 8; row++) {
-      for (let col = 0; col < 8; col++) {
+    for (let displayRow = 0; displayRow < 8; displayRow++) {
+      for (let displayCol = 0; displayCol < 8; displayCol++) {
+        const row = isFlipped ? 7 - displayRow : displayRow;
+        const col = isFlipped ? 7 - displayCol : displayCol;
         const cell = document.createElement('button');
         cell.type = 'button';
         cell.className = 'cell';
-        cell.classList.add((row + col) % 2 === 0 ? 'light' : 'dark');
-        if ((row + col) % 2 === 1) cell.classList.add('playable');
+        cell.classList.add((displayRow + displayCol) % 2 === 0 ? 'light' : 'dark');
+        if ((displayRow + displayCol) % 2 === 1) cell.classList.add('playable');
         cell.dataset.r = String(row);
         cell.dataset.c = String(col);
 

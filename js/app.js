@@ -10,7 +10,8 @@ import { GAME_EVENTS } from './modules/core/game-events.js';
 import { createAudioFeedback } from './modules/feedback/audio-feedback.js';
 import { pulseClass, vibrate } from './modules/feedback/haptics-feedback.js';
 
-const DIFFICULTIES_PT = ['Facil', 'Medio', 'Dificil'];
+const DIFFICULTIES_PT = ['Facil', 'Medio', 'Dificil', 'Expert'];
+const AI_STARTER_OPTIONS = ['player', 'random', 'cpu'];
 
 const appShell = document.querySelector('.app-shell');
 const screenMenu = document.getElementById('screen-menu');
@@ -50,14 +51,25 @@ const btnDifficulty = document.getElementById('btn-difficulty');
 const tournamentTimerEl = document.getElementById('tournament-timer');
 const navItems = [...document.querySelectorAll('.nav-item')];
 
-const btnVsAiDifficulty = document.getElementById('btn-vsai-difficulty');
 const btnVsAiStart = document.getElementById('btn-vsai-start');
 const btnVsAiBack = document.getElementById('btn-vsai-back');
+const btnVsAiDifficultyEasy = document.getElementById('btn-vsai-difficulty-easy');
+const btnVsAiDifficultyMedium = document.getElementById('btn-vsai-difficulty-medium');
+const btnVsAiDifficultyHard = document.getElementById('btn-vsai-difficulty-hard');
+const btnVsAiDifficultyExpert = document.getElementById('btn-vsai-difficulty-expert');
+const btnVsAiStarterPlayer = document.getElementById('btn-vsai-starter-player');
+const btnVsAiStarterRandom = document.getElementById('btn-vsai-starter-random');
+const btnVsAiStarterCpu = document.getElementById('btn-vsai-starter-cpu');
+const btnVsAiRuleBrazilian = document.getElementById('btn-vsai-rule-brazilian');
+const btnVsAiRuleAmerican = document.getElementById('btn-vsai-rule-american');
+const btnVsAiColorLight = document.getElementById('btn-vsai-color-light');
+const btnVsAiColorDark = document.getElementById('btn-vsai-color-dark');
 const btnPlayCpu = document.getElementById('btn-play-cpu');
 const btnPlayOnline = document.getElementById('btn-play-online');
 const btnPlayTournament = document.getElementById('btn-play-tournament');
 const btnPlayFriends = document.getElementById('btn-play-friends');
 const btnPlayBack = document.getElementById('btn-play-back');
+const playModesEl = document.querySelector('.play-modes');
 
 const settingsForceCaptureEl = document.getElementById('settings-force-capture');
 const btnSettingsBack = document.getElementById('btn-settings-back');
@@ -69,6 +81,7 @@ const btnRuleAmerican = document.getElementById('btn-rule-american');
 const btnDifficultyEasy = document.getElementById('btn-difficulty-easy');
 const btnDifficultyMedium = document.getElementById('btn-difficulty-medium');
 const btnDifficultyHard = document.getElementById('btn-difficulty-hard');
+const btnDifficultyExpert = document.getElementById('btn-difficulty-expert');
 
 const statsRankEl = document.getElementById('stats-rank');
 const statsLevelEl = document.getElementById('stats-level');
@@ -115,12 +128,27 @@ engine.setRuleSet(menuPrefs.ruleSet);
 
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
+    const isLocalDev = ['localhost', '127.0.0.1'].includes(window.location.hostname);
+    if (isLocalDev) {
+      navigator.serviceWorker.getRegistrations()
+        .then((regs) => Promise.all(regs.map((r) => r.unregister())))
+        .then(() => {
+          if (!('caches' in window)) return null;
+          return caches.keys().then((keys) => Promise.all(keys.map((k) => caches.delete(k))));
+        })
+        .catch(() => {});
+      return;
+    }
+
     navigator.serviceWorker.register('./service-worker.js').catch(() => {});
   });
 }
 
 function showScreen(name) {
   router.show(name);
+  if (name === 'vsai') {
+    refreshVsAiScreen();
+  }
   if (name === 'play') {
     triggerPlayIntro();
     if (audioUnlocked) audioFeedback.startMenuAmbience();
@@ -155,8 +183,38 @@ function emitGameEvent(eventType, payload = {}, { sync = true } = {}) {
 
 function getAiDifficultyKey() {
   if (menuPrefs.difficulty === 'Facil') return AI_DIFFICULTY.EASY;
+  if (menuPrefs.difficulty === 'Expert') return AI_DIFFICULTY.EXPERT;
   if (menuPrefs.difficulty === 'Dificil') return AI_DIFFICULTY.HARD;
   return AI_DIFFICULTY.MEDIUM;
+}
+
+function pickAiStarterResolved() {
+  if (!AI_STARTER_OPTIONS.includes(menuPrefs.aiStarter)) return 'player';
+  if (menuPrefs.aiStarter === 'random') {
+    return Math.random() < 0.5 ? 'player' : 'cpu';
+  }
+  return menuPrefs.aiStarter;
+}
+
+function getAiMatchSetup() {
+  const playerColor = menuPrefs.playerColor === 'black' ? 'black' : 'white';
+  const aiColor = playerColor === 'white' ? 'black' : 'white';
+  const starterResolved = pickAiStarterResolved();
+  if (starterResolved === 'cpu') {
+    return {
+      starterResolved,
+      playerColor,
+      aiColor,
+      startTurn: aiColor
+    };
+  }
+
+  return {
+    starterResolved,
+    playerColor,
+    aiColor,
+    startTurn: playerColor
+  };
 }
 
 function isAiTurn() {
@@ -325,7 +383,8 @@ function renderBoard() {
     board: engine.board,
     selected: engine.selected,
     highlightedMoves,
-    effects: boardEffects
+    effects: boardEffects,
+    orientation: currentMatch?.playerColor || 'white'
   });
 }
 
@@ -416,7 +475,7 @@ function scheduleAiMove() {
       if (!isAiTurn()) return;
 
       const move = chooseAIMove(engine, {
-        color: 'black',
+        color: currentMatch?.aiColor || 'black',
         difficulty: getAiDifficultyKey()
       });
 
@@ -516,8 +575,8 @@ function syncForceCaptureInputs() {
 }
 
 function refreshResumeButton() {
-  const hasResume = !!(lastGame && lastGame.engine && Array.isArray(lastGame.engine.board));
-  btnResume.style.display = hasResume ? '' : 'none';
+  if (!btnResume) return;
+  btnResume.style.display = '';
 }
 
 function refreshProgressCard() {
@@ -559,10 +618,10 @@ function refreshStatsScreen() {
 }
 
 function refreshMenuButtons() {
-  btnRules.setAttribute('aria-label', `Regras: ${menuPrefs.ruleSet}`);
-  btnDifficulty.setAttribute('aria-label', `Dificuldade: ${menuPrefs.difficulty}`);
-  btnVsAiDifficulty.textContent = `Dificuldade: ${menuPrefs.difficulty}`;
-  btnPlay.setAttribute('aria-label', 'Jogar');
+  btnResume.setAttribute('aria-label', 'Jogar online');
+  btnRules.setAttribute('aria-label', 'Jogar com amigos');
+  btnDifficulty.setAttribute('aria-label', 'Jogar torneio');
+  btnPlay.setAttribute('aria-label', 'Jogar vs CPU');
 }
 
 function refreshRulesScreen() {
@@ -574,6 +633,21 @@ function refreshDifficultyScreen() {
   btnDifficultyEasy?.classList.toggle('active', menuPrefs.difficulty === 'Facil');
   btnDifficultyMedium?.classList.toggle('active', menuPrefs.difficulty === 'Medio');
   btnDifficultyHard?.classList.toggle('active', menuPrefs.difficulty === 'Dificil');
+  btnDifficultyExpert?.classList.toggle('active', menuPrefs.difficulty === 'Expert');
+}
+
+function refreshVsAiScreen() {
+  btnVsAiDifficultyEasy?.classList.toggle('active', menuPrefs.difficulty === 'Facil');
+  btnVsAiDifficultyMedium?.classList.toggle('active', menuPrefs.difficulty === 'Medio');
+  btnVsAiDifficultyHard?.classList.toggle('active', menuPrefs.difficulty === 'Dificil');
+  btnVsAiDifficultyExpert?.classList.toggle('active', menuPrefs.difficulty === 'Expert');
+  btnVsAiStarterPlayer?.classList.toggle('active', menuPrefs.aiStarter === 'player');
+  btnVsAiStarterRandom?.classList.toggle('active', menuPrefs.aiStarter === 'random');
+  btnVsAiStarterCpu?.classList.toggle('active', menuPrefs.aiStarter === 'cpu');
+  btnVsAiRuleBrazilian?.classList.toggle('active', menuPrefs.ruleSet === 'Brasileiro');
+  btnVsAiRuleAmerican?.classList.toggle('active', menuPrefs.ruleSet === 'Americano');
+  btnVsAiColorLight?.classList.toggle('active', menuPrefs.playerColor !== 'black');
+  btnVsAiColorDark?.classList.toggle('active', menuPrefs.playerColor === 'black');
 }
 
 function startMatch({ resume = false } = {}) {
@@ -587,8 +661,16 @@ function startMatch({ resume = false } = {}) {
 
   if (resume && lastGame && applyEngineSnapshot(lastGame.engine)) {
     menuPrefs = { ...menuPrefs, ...(lastGame.menuPrefs || {}) };
-    currentMatch = lastGame.currentMatch || { moves: 0, captures: 0, playerColor: 'white', startedAt: Date.now() };
+    currentMatch = lastGame.currentMatch || {
+      moves: 0,
+      captures: 0,
+      playerColor: 'white',
+      aiColor: 'black',
+      starterResolved: 'player',
+      startedAt: Date.now()
+    };
     if (!currentMatch.playerColor) currentMatch.playerColor = 'white';
+    if (!currentMatch.aiColor) currentMatch.aiColor = currentMatch.playerColor === 'white' ? 'black' : 'white';
     matchFinalized = !!lastGame.matchFinalized;
     emitGameEvent(GAME_EVENTS.MATCH_RESTORED, {
       mode: menuPrefs.mode,
@@ -598,7 +680,19 @@ function startMatch({ resume = false } = {}) {
     engine.reset();
     engine.setForceCapture(!!menuPrefs.forceCapture);
     engine.setRuleSet(menuPrefs.ruleSet);
-    currentMatch = { moves: 0, captures: 0, playerColor: 'white', startedAt: Date.now() };
+    const matchSetup = menuPrefs.mode === 'ai'
+      ? getAiMatchSetup()
+      : { playerColor: 'white', aiColor: 'black', starterResolved: 'player', startTurn: 'white' };
+    engine.turn = matchSetup.startTurn;
+    engine.rebuildPositionHistory();
+    currentMatch = {
+      moves: 0,
+      captures: 0,
+      playerColor: matchSetup.playerColor,
+      aiColor: matchSetup.aiColor,
+      starterResolved: matchSetup.starterResolved,
+      startedAt: Date.now()
+    };
     matchFinalized = false;
     emitGameEvent(GAME_EVENTS.MATCH_STARTED, {
       mode: menuPrefs.mode,
@@ -620,12 +714,56 @@ function startMatch({ resume = false } = {}) {
   scheduleAiMove();
 }
 
+function setMenuDifficulty(nextDifficulty) {
+  if (!DIFFICULTIES_PT.includes(nextDifficulty) || menuPrefs.difficulty === nextDifficulty) return;
+  menuPrefs.difficulty = nextDifficulty;
+  refreshMenuButtons();
+  refreshDifficultyScreen();
+  refreshVsAiScreen();
+  saveSettings();
+  emitGameEvent(GAME_EVENTS.SETTINGS_CHANGED, { key: 'difficulty', value: menuPrefs.difficulty });
+  persistLastGame();
+}
+
+function setMenuRuleSet(nextRuleSet) {
+  if (!['Brasileiro', 'Americano'].includes(nextRuleSet) || menuPrefs.ruleSet === nextRuleSet) return;
+  menuPrefs.ruleSet = nextRuleSet;
+  engine.setRuleSet(menuPrefs.ruleSet);
+  refreshMenuButtons();
+  refreshRulesScreen();
+  refreshVsAiScreen();
+  clearSelection();
+  renderAll();
+  saveSettings();
+  emitGameEvent(GAME_EVENTS.SETTINGS_CHANGED, { key: 'ruleSet', value: menuPrefs.ruleSet });
+  persistLastGame();
+}
+
+function setAiStarter(nextStarter) {
+  if (!AI_STARTER_OPTIONS.includes(nextStarter) || menuPrefs.aiStarter === nextStarter) return;
+  menuPrefs.aiStarter = nextStarter;
+  refreshVsAiScreen();
+  saveSettings();
+  emitGameEvent(GAME_EVENTS.SETTINGS_CHANGED, { key: 'aiStarter', value: menuPrefs.aiStarter });
+  persistLastGame();
+}
+
+function setPlayerColor(nextColor) {
+  if (!['white', 'black'].includes(nextColor) || menuPrefs.playerColor === nextColor) return;
+  menuPrefs.playerColor = nextColor;
+  refreshVsAiScreen();
+  saveSettings();
+  emitGameEvent(GAME_EVENTS.SETTINGS_CHANGED, { key: 'playerColor', value: menuPrefs.playerColor });
+  persistLastGame();
+}
+
 btnPlay.addEventListener('click', () => {
-  showScreen('play');
+  refreshVsAiScreen();
+  showScreen('vsai');
 });
 
 btnResume.addEventListener('click', () => {
-  startMatch({ resume: true });
+  alert('Modo online em breve.');
 });
 
 btnVsAiStart.addEventListener('click', () => {
@@ -637,10 +775,11 @@ btnVsAiStart.addEventListener('click', () => {
 
 btnVsAiBack.addEventListener('click', () => {
   audioFeedback.playBack();
-  showScreen('play');
+  showScreen('menu');
 });
 
 btnPlayCpu.addEventListener('click', () => {
+  refreshVsAiScreen();
   showScreen('vsai');
 });
 
@@ -661,14 +800,17 @@ btnPlayBack.addEventListener('click', () => {
   showScreen('menu');
 });
 
-btnVsAiDifficulty.addEventListener('click', () => {
-  const index = DIFFICULTIES_PT.indexOf(menuPrefs.difficulty);
-  menuPrefs.difficulty = DIFFICULTIES_PT[(index + 1) % DIFFICULTIES_PT.length];
-  refreshMenuButtons();
-  saveSettings();
-  emitGameEvent(GAME_EVENTS.SETTINGS_CHANGED, { key: 'difficulty', value: menuPrefs.difficulty });
-  persistLastGame();
-});
+btnVsAiDifficultyEasy?.addEventListener('click', () => setMenuDifficulty('Facil'));
+btnVsAiDifficultyMedium?.addEventListener('click', () => setMenuDifficulty('Medio'));
+btnVsAiDifficultyHard?.addEventListener('click', () => setMenuDifficulty('Dificil'));
+btnVsAiDifficultyExpert?.addEventListener('click', () => setMenuDifficulty('Expert'));
+btnVsAiStarterPlayer?.addEventListener('click', () => setAiStarter('player'));
+btnVsAiStarterRandom?.addEventListener('click', () => setAiStarter('random'));
+btnVsAiStarterCpu?.addEventListener('click', () => setAiStarter('cpu'));
+btnVsAiRuleBrazilian?.addEventListener('click', () => setMenuRuleSet('Brasileiro'));
+btnVsAiRuleAmerican?.addEventListener('click', () => setMenuRuleSet('Americano'));
+btnVsAiColorLight?.addEventListener('click', () => setPlayerColor('white'));
+btnVsAiColorDark?.addEventListener('click', () => setPlayerColor('black'));
 
 btnBackMenu.addEventListener('click', () => {
   audioFeedback.playBack();
@@ -678,13 +820,11 @@ btnBackMenu.addEventListener('click', () => {
 });
 
 btnRules.addEventListener('click', () => {
-  refreshRulesScreen();
-  showScreen('rules');
+  alert('Modo jogar com amigos em breve.');
 });
 
 btnDifficulty.addEventListener('click', () => {
-  refreshDifficultyScreen();
-  showScreen('difficulty');
+  alert('Modo torneio em breve.');
 });
 
 navItems.forEach((btn) => {
@@ -736,100 +876,92 @@ btnDifficultyBack.addEventListener('click', () => {
   showScreen('menu');
 });
 
-btnRuleBrazilian.addEventListener('click', () => {
-  if (menuPrefs.ruleSet === 'Brasileiro') return;
-  menuPrefs.ruleSet = 'Brasileiro';
-  engine.setRuleSet(menuPrefs.ruleSet);
-  refreshMenuButtons();
-  refreshRulesScreen();
-  clearSelection();
-  renderAll();
-  saveSettings();
-  emitGameEvent(GAME_EVENTS.SETTINGS_CHANGED, { key: 'ruleSet', value: menuPrefs.ruleSet });
-  persistLastGame();
-});
-
-btnRuleAmerican.addEventListener('click', () => {
-  if (menuPrefs.ruleSet === 'Americano') return;
-  menuPrefs.ruleSet = 'Americano';
-  engine.setRuleSet(menuPrefs.ruleSet);
-  refreshMenuButtons();
-  refreshRulesScreen();
-  clearSelection();
-  renderAll();
-  saveSettings();
-  emitGameEvent(GAME_EVENTS.SETTINGS_CHANGED, { key: 'ruleSet', value: menuPrefs.ruleSet });
-  persistLastGame();
-});
-
-btnDifficultyEasy.addEventListener('click', () => {
-  if (menuPrefs.difficulty === 'Facil') return;
-  menuPrefs.difficulty = 'Facil';
-  refreshMenuButtons();
-  refreshDifficultyScreen();
-  saveSettings();
-  emitGameEvent(GAME_EVENTS.SETTINGS_CHANGED, { key: 'difficulty', value: menuPrefs.difficulty });
-  persistLastGame();
-});
-
-btnDifficultyMedium.addEventListener('click', () => {
-  if (menuPrefs.difficulty === 'Medio') return;
-  menuPrefs.difficulty = 'Medio';
-  refreshMenuButtons();
-  refreshDifficultyScreen();
-  saveSettings();
-  emitGameEvent(GAME_EVENTS.SETTINGS_CHANGED, { key: 'difficulty', value: menuPrefs.difficulty });
-  persistLastGame();
-});
-
-btnDifficultyHard.addEventListener('click', () => {
-  if (menuPrefs.difficulty === 'Dificil') return;
-  menuPrefs.difficulty = 'Dificil';
-  refreshMenuButtons();
-  refreshDifficultyScreen();
-  saveSettings();
-  emitGameEvent(GAME_EVENTS.SETTINGS_CHANGED, { key: 'difficulty', value: menuPrefs.difficulty });
-  persistLastGame();
-});
+btnRuleBrazilian.addEventListener('click', () => setMenuRuleSet('Brasileiro'));
+btnRuleAmerican.addEventListener('click', () => setMenuRuleSet('Americano'));
+btnDifficultyEasy.addEventListener('click', () => setMenuDifficulty('Facil'));
+btnDifficultyMedium.addEventListener('click', () => setMenuDifficulty('Medio'));
+btnDifficultyHard.addEventListener('click', () => setMenuDifficulty('Dificil'));
+btnDifficultyExpert?.addEventListener('click', () => setMenuDifficulty('Expert'));
 
 function registerMenuClickSound() {
-  const menuClickButtons = [
-    btnPlay,
-    btnResume,
-    btnRules,
-    btnDifficulty,
-    btnPlayCpu,
-    btnPlayOnline,
-    btnPlayTournament,
-    btnPlayFriends,
-    btnVsAiDifficulty,
-    btnVsAiStart,
-    ...navItems
-  ].filter(Boolean);
+  const backIds = new Set([
+    'btn-back-menu',
+    'btn-vsai-back',
+    'btn-play-back',
+    'btn-settings-back',
+    'btn-stats-back',
+    'btn-rules-back',
+    'btn-difficulty-back'
+  ]);
 
-  const optionClickButtons = [
-    btnRuleBrazilian,
-    btnRuleAmerican,
-    btnDifficultyEasy,
-    btnDifficultyMedium,
-    btnDifficultyHard
-  ].filter(Boolean);
+  document.addEventListener('click', (ev) => {
+    const target = ev.target;
+    if (!(target instanceof Element)) return;
 
-  menuClickButtons.forEach((btn) => {
-    btn.addEventListener('click', () => {
-      audioFeedback.playMenuClick();
-    });
-  });
+    const clickable = target.closest('button, input[type=\"checkbox\"], label.toggle');
+    if (!clickable) return;
 
-  optionClickButtons.forEach((btn) => {
-    btn.addEventListener('click', () => {
-      audioFeedback.playMenuClick();
-    });
+    unlockAudioIfNeeded();
+
+    if (clickable.classList.contains('cell') || clickable.closest('.board')) return;
+    if (clickable instanceof HTMLButtonElement && backIds.has(clickable.id)) return;
+
+    audioFeedback.playMenuClick();
   });
 }
 
+function registerPlayCarouselSound() {
+  if (!playModesEl) return;
+
+  const tiles = [...playModesEl.querySelectorAll('.play-tile')];
+  if (tiles.length <= 1) return;
+
+  let activeIndex = 0;
+  let rafId = null;
+
+  function getClosestIndex() {
+    const modesRect = playModesEl.getBoundingClientRect();
+    const centerX = modesRect.left + (modesRect.width / 2);
+    let bestIndex = 0;
+    let bestDist = Number.POSITIVE_INFINITY;
+
+    tiles.forEach((tile, idx) => {
+      const rect = tile.getBoundingClientRect();
+      const tileCenter = rect.left + (rect.width / 2);
+      const dist = Math.abs(tileCenter - centerX);
+      if (dist < bestDist) {
+        bestDist = dist;
+        bestIndex = idx;
+      }
+    });
+
+    return bestIndex;
+  }
+
+  function syncActive({ withSound = false } = {}) {
+    const nextIndex = getClosestIndex();
+    if (nextIndex !== activeIndex) {
+      activeIndex = nextIndex;
+      if (withSound) audioFeedback.playBack();
+    }
+  }
+
+  requestAnimationFrame(() => syncActive({ withSound: false }));
+
+  playModesEl.addEventListener('scroll', () => {
+    if (rafId) return;
+    rafId = requestAnimationFrame(() => {
+      rafId = null;
+      syncActive({ withSound: true });
+    });
+  }, { passive: true });
+
+  window.addEventListener('resize', () => {
+    syncActive({ withSound: false });
+  }, { passive: true });
+}
+
 settingsForceCaptureEl.addEventListener('change', () => {
-  audioFeedback.playMenuClick();
   menuPrefs.forceCapture = settingsForceCaptureEl.checked;
   forceCaptureEl.checked = settingsForceCaptureEl.checked;
   engine.setForceCapture(menuPrefs.forceCapture);
@@ -841,12 +973,10 @@ settingsForceCaptureEl.addEventListener('change', () => {
 });
 
 btnNew.addEventListener('click', () => {
-  audioFeedback.playMenuClick();
   startMatch();
 });
 
 btnUndo.addEventListener('click', () => {
-  audioFeedback.playMenuClick();
   if (isAiTurn()) return;
 
   if (engine.undo()) {
@@ -857,7 +987,6 @@ btnUndo.addEventListener('click', () => {
 });
 
 forceCaptureEl.addEventListener('change', () => {
-  audioFeedback.playMenuClick();
   menuPrefs.forceCapture = forceCaptureEl.checked;
   settingsForceCaptureEl.checked = forceCaptureEl.checked;
   engine.setForceCapture(menuPrefs.forceCapture);
@@ -879,21 +1008,33 @@ window.addEventListener('beforeunload', () => {
   syncCoordinator.disconnect().catch(() => {});
 });
 
-window.addEventListener('pointerdown', () => {
+function unlockAudioIfNeeded() {
   if (audioUnlocked) return;
   audioUnlocked = true;
   audioFeedback.unlock();
   if (appShell?.dataset.screen === 'play') {
     audioFeedback.startMenuAmbience();
   }
-}, { once: true });
+
+  window.removeEventListener('pointerdown', unlockAudioIfNeeded);
+  window.removeEventListener('touchstart', unlockAudioIfNeeded);
+  window.removeEventListener('click', unlockAudioIfNeeded);
+  window.removeEventListener('keydown', unlockAudioIfNeeded);
+}
+
+window.addEventListener('pointerdown', unlockAudioIfNeeded, { capture: true, passive: true });
+window.addEventListener('touchstart', unlockAudioIfNeeded, { capture: true, passive: true });
+window.addEventListener('click', unlockAudioIfNeeded, { capture: true, passive: true });
+window.addEventListener('keydown', unlockAudioIfNeeded, { capture: true, passive: true });
 
 boardUI.mount();
 setupPlayIntroStagger();
 registerMenuClickSound();
+registerPlayCarouselSound();
 refreshMenuButtons();
 refreshRulesScreen();
 refreshDifficultyScreen();
+refreshVsAiScreen();
 refreshProgressCard();
 refreshStatsScreen();
 startTournamentClock();
@@ -901,6 +1042,7 @@ syncForceCaptureInputs();
 refreshResumeButton();
 renderAll();
 showScreen('menu');
+
 
 
 

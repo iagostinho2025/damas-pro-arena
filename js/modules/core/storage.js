@@ -7,6 +7,8 @@
 const DEFAULT_SETTINGS = Object.freeze({
   ruleSet: 'Brasileiro',
   difficulty: 'Medio',
+  aiStarter: 'player',
+  playerColor: 'white',
   mode: 'ai',
   forceCapture: true
 });
@@ -67,7 +69,9 @@ function normalizeSettings(value) {
 
   return {
     ruleSet: normalizedRuleSet,
-    difficulty: ['Facil', 'Medio', 'Dificil'].includes(v.difficulty) ? v.difficulty : DEFAULT_SETTINGS.difficulty,
+    difficulty: ['Facil', 'Medio', 'Dificil', 'Expert'].includes(v.difficulty) ? v.difficulty : DEFAULT_SETTINGS.difficulty,
+    aiStarter: ['player', 'random', 'cpu'].includes(v.aiStarter) ? v.aiStarter : DEFAULT_SETTINGS.aiStarter,
+    playerColor: ['white', 'black'].includes(v.playerColor) ? v.playerColor : DEFAULT_SETTINGS.playerColor,
     mode: ['ai', 'pvp', 'online'].includes(v.mode) ? v.mode : DEFAULT_SETTINGS.mode,
     forceCapture: typeof v.forceCapture === 'boolean' ? v.forceCapture : DEFAULT_SETTINGS.forceCapture
   };

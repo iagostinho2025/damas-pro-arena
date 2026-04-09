@@ -1,4 +1,4 @@
-const CACHE_NAME = 'damas-pro-arena-v62';
+﻿const CACHE_NAME = 'damas-pro-arena-v68';
 const APP_SHELL = [
   './',
   './index.html',
@@ -28,13 +28,10 @@ const APP_SHELL = [
   './assets/img/jogar_vs_cpu.webp',
   './assets/img/jogar_online.webp',
   './assets/img/jogar_com_amigos.webp',
-  './assets/img/jogar_torneios.webp',
-  './assets/img/menu_jogar.webp',
-  './assets/img/menu_continuar.webp',
-  './assets/img/menu_regras.webp',
-  './assets/img/menu_dificuldade.webp',
+  './assets/img/jogar_torneio.webp',
   './assets/backgrounds/tela_inicial.webp',
   './assets/backgrounds/modos_de_jogo.webp',
+  './assets/backgrounds/tela_jogar_vs_cpu.webp',
   './assets/sounds/back.mp3',
   './assets/sounds/click.mp3',
   './assets/sounds/drag.mp3',
@@ -44,7 +41,15 @@ const APP_SHELL = [
 self.addEventListener('install', (event) => {
   event.waitUntil((async () => {
     const cache = await caches.open(CACHE_NAME);
-    await cache.addAll(APP_SHELL);
+    await Promise.all(
+      APP_SHELL.map(async (url) => {
+        try {
+          await cache.add(url);
+        } catch {
+          // ignore individual cache failures to avoid aborting install
+        }
+      })
+    );
   })());
   self.skipWaiting();
 });
