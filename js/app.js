@@ -7,11 +7,20 @@ import { EventBus } from './modules/core/event-bus.js';
 import { TurnFlow } from './modules/core/turn-flow.js';
 import { SyncCoordinator } from './modules/core/sync-coordinator.js';
 import { GAME_EVENTS } from './modules/core/game-events.js';
+import {
+  DIFFICULTIES_PT,
+  getAiDifficultyKey,
+  getAiMatchSetup,
+  inferCaptureCell,
+  hasResumableMatch,
+  fmt2,
+  getNextTournamentDate
+} from './modules/core/match-utils.js';
+import { createAiTurnController } from './modules/core/ai-turn-controller.js';
+import { registerMenuClickSound, registerPlayCarouselSound } from './modules/ui/interaction-bindings.js';
+import { registerAppEventBindings } from './modules/ui/app-event-bindings.js';
 import { createAudioFeedback } from './modules/feedback/audio-feedback.js';
 import { pulseClass, vibrate } from './modules/feedback/haptics-feedback.js';
-
-const DIFFICULTIES_PT = ['Facil', 'Medio', 'Dificil', 'Expert'];
-const AI_STARTER_OPTIONS = ['player', 'random', 'cpu'];
 
 const appShell = document.querySelector('.app-shell');
 const screenMenu = document.getElementById('screen-menu');
@@ -98,6 +107,12 @@ const statsTotalCapturesEl = document.getElementById('stats-total-captures');
 
 const boardEl = document.getElementById('board');
 const statusEl = document.getElementById('status');
+const gamePlayerCardEl = document.getElementById('game-player-card');
+const gameOpponentCardEl = document.getElementById('game-opponent-card');
+const gamePlayerNameEl = document.getElementById('game-player-name');
+const gamePlayerSideEl = document.getElementById('game-player-side');
+const gameOpponentNameEl = document.getElementById('game-opponent-name');
+const gameOpponentSideEl = document.getElementById('game-opponent-side');
 const btnNew = document.getElementById('btn-new');
 const btnUndo = document.getElementById('btn-undo');
 const forceCaptureEl = document.getElementById('force-capture');
@@ -119,9 +134,11 @@ let lastGame = storage.getLastGame();
 let currentMatch = null;
 let matchFinalized = false;
 let tournamentInterval = null;
-let aiTimer = null;
 let fxTimer = null;
 let audioUnlocked = false;
+let aiTurnController = null;
+let newMatchConfirmPending = false;
+let newMatchConfirmTimer = null;
 const PLAYER_NAME = localStorage.getItem('dpa_player_name') || 'Jogador';
 
 engine.setRuleSet(menuPrefs.ruleSet);
@@ -181,56 +198,21 @@ function emitGameEvent(eventType, payload = {}, { sync = true } = {}) {
   if (sync) syncCoordinator.pushOutbound(eventType, payload);
 }
 
-function getAiDifficultyKey() {
-  if (menuPrefs.difficulty === 'Facil') return AI_DIFFICULTY.EASY;
-  if (menuPrefs.difficulty === 'Expert') return AI_DIFFICULTY.EXPERT;
-  if (menuPrefs.difficulty === 'Dificil') return AI_DIFFICULTY.HARD;
-  return AI_DIFFICULTY.MEDIUM;
-}
-
-function pickAiStarterResolved() {
-  if (!AI_STARTER_OPTIONS.includes(menuPrefs.aiStarter)) return 'player';
-  if (menuPrefs.aiStarter === 'random') {
-    return Math.random() < 0.5 ? 'player' : 'cpu';
-  }
-  return menuPrefs.aiStarter;
-}
-
-function getAiMatchSetup() {
-  const playerColor = menuPrefs.playerColor === 'black' ? 'black' : 'white';
-  const aiColor = playerColor === 'white' ? 'black' : 'white';
-  const starterResolved = pickAiStarterResolved();
-  if (starterResolved === 'cpu') {
-    return {
-      starterResolved,
-      playerColor,
-      aiColor,
-      startTurn: aiColor
-    };
-  }
-
-  return {
-    starterResolved,
-    playerColor,
-    aiColor,
-    startTurn: playerColor
-  };
-}
-
 function isAiTurn() {
+  if (aiTurnController) return aiTurnController.isAiTurn();
   return turnFlow.isAITurn(engine.turn) && !engine.winner;
+}
+
+function emitTurnChanged() {
+  emitGameEvent(GAME_EVENTS.TURN_CHANGED, {
+    turn: engine.turn,
+    actor: turnFlow.getActorForTurn(engine.turn)
+  });
 }
 
 function clearSelection() {
   engine.selected = null;
   highlightedMoves = [];
-}
-
-function inferCaptureCell(move) {
-  const dr = move.to[0] - move.from[0];
-  const dc = move.to[1] - move.from[1];
-  if (Math.abs(dr) !== 2 || Math.abs(dc) !== 2) return null;
-  return [move.from[0] + dr / 2, move.from[1] + dc / 2];
 }
 
 function applyMoveEffects(move) {
@@ -343,6 +325,7 @@ function finalizeMatchIfNeeded() {
 
 function renderStatus() {
   finalizeMatchIfNeeded();
+  refreshGameHud();
 
   const turnLabel = engine.turn === 'white' ? 'Brancas' : 'Pretas';
 
@@ -376,6 +359,22 @@ function renderStatus() {
   }
 
   statusEl.textContent = `Vez das ${turnLabel}.`;
+}
+
+function refreshGameHud() {
+  if (!gamePlayerNameEl || !gameOpponentNameEl || !gamePlayerSideEl || !gameOpponentSideEl) return;
+
+  const localColor = currentMatch?.playerColor || (menuPrefs.playerColor === 'black' ? 'black' : 'white');
+  const opponentColor = localColor === 'white' ? 'black' : 'white';
+  const opponentName = menuPrefs.mode === 'ai' ? `CPU ${menuPrefs.difficulty}` : 'Jogador 2';
+
+  gamePlayerNameEl.textContent = PLAYER_NAME;
+  gameOpponentNameEl.textContent = opponentName;
+  gamePlayerSideEl.textContent = localColor === 'white' ? 'Brancas' : 'Pretas';
+  gameOpponentSideEl.textContent = opponentColor === 'white' ? 'Brancas' : 'Pretas';
+
+  if (gamePlayerCardEl) gamePlayerCardEl.classList.toggle('is-active', engine.turn === localColor && !engine.winner);
+  if (gameOpponentCardEl) gameOpponentCardEl.classList.toggle('is-active', engine.turn === opponentColor && !engine.winner);
 }
 
 function renderBoard() {
@@ -434,10 +433,7 @@ function onBoardCellClick(row, col) {
       }
 
       renderAll();
-      emitGameEvent(GAME_EVENTS.TURN_CHANGED, {
-        turn: engine.turn,
-        actor: turnFlow.getActorForTurn(engine.turn)
-      });
+      emitTurnChanged();
       persistLastGame();
       scheduleAiMove();
       return;
@@ -458,90 +454,11 @@ function onBoardCellClick(row, col) {
 }
 
 function clearAiTimer() {
-  if (!aiTimer) return;
-  clearTimeout(aiTimer);
-  aiTimer = null;
+  aiTurnController?.clearAiTimer();
 }
 
 function scheduleAiMove() {
-  clearAiTimer();
-  if (!isAiTurn()) return;
-
-  renderStatus();
-
-  aiTimer = setTimeout(() => {
-    const runAiStep = () => {
-      aiTimer = null;
-      if (!isAiTurn()) return;
-
-      const move = chooseAIMove(engine, {
-        color: currentMatch?.aiColor || 'black',
-        difficulty: getAiDifficultyKey()
-      });
-
-      if (!move) {
-        engine.winner = detectWinner(engine.board, engine.turn, {
-          forceCapture: engine.forceCapture,
-          ruleSet: engine.ruleSet
-        }) || 'white';
-        if (engine.winner === GAME_RESULT.DRAW) engine.drawReason = 'blocked';
-        clearSelection();
-        renderAll();
-        emitGameEvent(GAME_EVENTS.TURN_CHANGED, {
-          turn: engine.turn,
-          actor: turnFlow.getActorForTurn(engine.turn)
-        });
-        persistLastGame();
-        return;
-      }
-
-      const moveResult = engine.tryMove(move.from, move.to);
-      if (!moveResult.ok) {
-        clearSelection();
-        renderAll();
-        persistLastGame();
-        return;
-      }
-
-      applyMoveEffects(move);
-      countMoveForMatch(move);
-      triggerMoveFeedback(move, { actor: 'ai' });
-      emitGameEvent(GAME_EVENTS.MOVE_COMMITTED, {
-        actor: 'ai',
-        move,
-        turnAfter: engine.turn,
-        chainCapture: !!moveResult.chainCapture
-      });
-
-      clearSelection();
-      renderAll();
-      persistLastGame();
-
-      if (moveResult.chainCapture && isAiTurn() && !engine.winner) {
-        aiTimer = setTimeout(runAiStep, 340);
-        return;
-      }
-
-      emitGameEvent(GAME_EVENTS.TURN_CHANGED, {
-        turn: engine.turn,
-        actor: turnFlow.getActorForTurn(engine.turn)
-      });
-    };
-
-    runAiStep();
-  }, 320);
-}
-
-function fmt2(n) {
-  return String(n).padStart(2, '0');
-}
-
-function getNextTournamentDate() {
-  const now = new Date();
-  const next = new Date(now);
-  next.setHours(21, 0, 0, 0);
-  if (next <= now) next.setDate(next.getDate() + 1);
-  return next;
+  aiTurnController?.scheduleAiMove();
 }
 
 function updateTournamentTimer() {
@@ -570,13 +487,16 @@ function saveSettings() {
 }
 
 function syncForceCaptureInputs() {
-  forceCaptureEl.checked = !!menuPrefs.forceCapture;
-  settingsForceCaptureEl.checked = !!menuPrefs.forceCapture;
+  if (forceCaptureEl) forceCaptureEl.checked = !!menuPrefs.forceCapture;
+  if (settingsForceCaptureEl) settingsForceCaptureEl.checked = !!menuPrefs.forceCapture;
 }
 
 function refreshResumeButton() {
   if (!btnResume) return;
-  btnResume.style.display = '';
+  const canResume = hasResumableMatch(lastGame);
+  btnResume.disabled = !canResume;
+  btnResume.setAttribute('aria-disabled', canResume ? 'false' : 'true');
+  btnResume.setAttribute('aria-label', canResume ? 'Continuar partida' : 'Nenhuma partida para continuar');
 }
 
 function refreshProgressCard() {
@@ -618,7 +538,7 @@ function refreshStatsScreen() {
 }
 
 function refreshMenuButtons() {
-  btnResume.setAttribute('aria-label', 'Jogar online');
+  btnResume.setAttribute('aria-label', 'Continuar partida');
   btnRules.setAttribute('aria-label', 'Jogar com amigos');
   btnDifficulty.setAttribute('aria-label', 'Jogar torneio');
   btnPlay.setAttribute('aria-label', 'Jogar vs CPU');
@@ -651,6 +571,7 @@ function refreshVsAiScreen() {
 }
 
 function startMatch({ resume = false } = {}) {
+  resetNewMatchConfirm();
   clearAiTimer();
   if (fxTimer) {
     clearTimeout(fxTimer);
@@ -681,7 +602,7 @@ function startMatch({ resume = false } = {}) {
     engine.setForceCapture(!!menuPrefs.forceCapture);
     engine.setRuleSet(menuPrefs.ruleSet);
     const matchSetup = menuPrefs.mode === 'ai'
-      ? getAiMatchSetup()
+      ? getAiMatchSetup(menuPrefs)
       : { playerColor: 'white', aiColor: 'black', starterResolved: 'player', startTurn: 'white' };
     engine.turn = matchSetup.startTurn;
     engine.rebuildPositionHistory();
@@ -706,10 +627,7 @@ function startMatch({ resume = false } = {}) {
   refreshMenuButtons();
   renderAll();
   showScreen('game');
-  emitGameEvent(GAME_EVENTS.TURN_CHANGED, {
-    turn: engine.turn,
-    actor: turnFlow.getActorForTurn(engine.turn)
-  });
+  emitTurnChanged();
   persistLastGame();
   scheduleAiMove();
 }
@@ -740,7 +658,7 @@ function setMenuRuleSet(nextRuleSet) {
 }
 
 function setAiStarter(nextStarter) {
-  if (!AI_STARTER_OPTIONS.includes(nextStarter) || menuPrefs.aiStarter === nextStarter) return;
+  if (!['player', 'random', 'cpu'].includes(nextStarter) || menuPrefs.aiStarter === nextStarter) return;
   menuPrefs.aiStarter = nextStarter;
   refreshVsAiScreen();
   saveSettings();
@@ -757,244 +675,185 @@ function setPlayerColor(nextColor) {
   persistLastGame();
 }
 
-btnPlay.addEventListener('click', () => {
-  refreshVsAiScreen();
-  showScreen('vsai');
-});
+function showSoon(message) {
+  alert(message);
+}
 
-btnResume.addEventListener('click', () => {
-  alert('Modo online em breve.');
-});
+function clearNewMatchConfirmTimer() {
+  if (!newMatchConfirmTimer) return;
+  clearTimeout(newMatchConfirmTimer);
+  newMatchConfirmTimer = null;
+}
 
-btnVsAiStart.addEventListener('click', () => {
-  menuPrefs.mode = 'ai';
+function setNewMatchButtonState() {
+  if (!btnNew) return;
+  const label = btnNew.querySelector('span:last-child');
+  btnNew.classList.toggle('confirm-pending', newMatchConfirmPending);
+  if (label) {
+    label.textContent = newMatchConfirmPending ? 'Confirmar reinício' : 'Nova partida';
+  }
+}
+
+function resetNewMatchConfirm() {
+  newMatchConfirmPending = false;
+  clearNewMatchConfirmTimer();
+  setNewMatchButtonState();
+}
+
+function requestNewMatchConfirmOrStart() {
+  if (newMatchConfirmPending) {
+    resetNewMatchConfirm();
+    startMatch();
+    return;
+  }
+
+  newMatchConfirmPending = true;
+  setNewMatchButtonState();
+  clearNewMatchConfirmTimer();
+  newMatchConfirmTimer = setTimeout(() => {
+    resetNewMatchConfirm();
+  }, 2800);
+}
+
+function backToMenu() {
+  audioFeedback.playBack();
+  showScreen('menu');
+}
+
+function togglePvpMode() {
+  menuPrefs.mode = menuPrefs.mode === 'ai' ? 'pvp' : 'ai';
+  turnFlow.configure({ mode: menuPrefs.mode, localColor: currentMatch?.playerColor || 'white' });
+  refreshMenuButtons();
   saveSettings();
   emitGameEvent(GAME_EVENTS.SETTINGS_CHANGED, { key: 'mode', value: menuPrefs.mode });
-  startMatch();
-});
-
-btnVsAiBack.addEventListener('click', () => {
-  audioFeedback.playBack();
-  showScreen('menu');
-});
-
-btnPlayCpu.addEventListener('click', () => {
-  refreshVsAiScreen();
-  showScreen('vsai');
-});
-
-btnPlayOnline.addEventListener('click', () => {
-  alert('Modo online em breve.');
-});
-
-btnPlayTournament.addEventListener('click', () => {
-  alert('Modo torneio em breve.');
-});
-
-btnPlayFriends.addEventListener('click', () => {
-  alert('Modo jogar com amigos em breve.');
-});
-
-btnPlayBack.addEventListener('click', () => {
-  audioFeedback.playBack();
-  showScreen('menu');
-});
-
-btnVsAiDifficultyEasy?.addEventListener('click', () => setMenuDifficulty('Facil'));
-btnVsAiDifficultyMedium?.addEventListener('click', () => setMenuDifficulty('Medio'));
-btnVsAiDifficultyHard?.addEventListener('click', () => setMenuDifficulty('Dificil'));
-btnVsAiDifficultyExpert?.addEventListener('click', () => setMenuDifficulty('Expert'));
-btnVsAiStarterPlayer?.addEventListener('click', () => setAiStarter('player'));
-btnVsAiStarterRandom?.addEventListener('click', () => setAiStarter('random'));
-btnVsAiStarterCpu?.addEventListener('click', () => setAiStarter('cpu'));
-btnVsAiRuleBrazilian?.addEventListener('click', () => setMenuRuleSet('Brasileiro'));
-btnVsAiRuleAmerican?.addEventListener('click', () => setMenuRuleSet('Americano'));
-btnVsAiColorLight?.addEventListener('click', () => setPlayerColor('white'));
-btnVsAiColorDark?.addEventListener('click', () => setPlayerColor('black'));
-
-btnBackMenu.addEventListener('click', () => {
-  audioFeedback.playBack();
-  clearAiTimer();
-  showScreen('menu');
   persistLastGame();
+}
+
+function applyForceCapture(enabled) {
+  menuPrefs.forceCapture = !!enabled;
+  if (settingsForceCaptureEl) settingsForceCaptureEl.checked = menuPrefs.forceCapture;
+  if (forceCaptureEl) forceCaptureEl.checked = menuPrefs.forceCapture;
+  engine.setForceCapture(menuPrefs.forceCapture);
+  clearSelection();
+  renderAll();
+  saveSettings();
+  emitGameEvent(GAME_EVENTS.SETTINGS_CHANGED, { key: 'forceCapture', value: menuPrefs.forceCapture });
+  persistLastGame();
+}
+
+aiTurnController = createAiTurnController({
+  engine,
+  turnFlow,
+  chooseAIMove,
+  detectWinner,
+  GAME_RESULT,
+  getMenuPrefs: () => menuPrefs,
+  getCurrentMatch: () => currentMatch,
+  getDifficultyKey: (prefs) => getAiDifficultyKey(prefs.difficulty, AI_DIFFICULTY),
+  clearSelection,
+  renderAll,
+  renderStatus,
+  applyMoveEffects,
+  countMoveForMatch,
+  triggerMoveFeedback,
+  emitTurnChanged,
+  emitMoveCommitted: (payload) => emitGameEvent(GAME_EVENTS.MOVE_COMMITTED, payload),
+  persistLastGame
 });
 
-btnRules.addEventListener('click', () => {
-  alert('Modo jogar com amigos em breve.');
-});
-
-btnDifficulty.addEventListener('click', () => {
-  alert('Modo torneio em breve.');
-});
-
-navItems.forEach((btn) => {
-  btn.addEventListener('click', () => {
-    const section = btn.dataset.nav;
-
-    if (section === 'settings') {
-      showScreen('settings');
-      return;
-    }
-
-    if (section === 'pvp') {
-      menuPrefs.mode = menuPrefs.mode === 'ai' ? 'pvp' : 'ai';
-      turnFlow.configure({ mode: menuPrefs.mode, localColor: currentMatch?.playerColor || 'white' });
-      refreshMenuButtons();
+registerAppEventBindings({
+  elements: {
+    btnPlay,
+    btnResume,
+    btnVsAiStart,
+    btnVsAiBack,
+    btnPlayCpu,
+    btnPlayOnline,
+    btnPlayTournament,
+    btnPlayFriends,
+    btnPlayBack,
+    btnVsAiDifficultyEasy,
+    btnVsAiDifficultyMedium,
+    btnVsAiDifficultyHard,
+    btnVsAiDifficultyExpert,
+    btnVsAiStarterPlayer,
+    btnVsAiStarterRandom,
+    btnVsAiStarterCpu,
+    btnVsAiRuleBrazilian,
+    btnVsAiRuleAmerican,
+    btnVsAiColorLight,
+    btnVsAiColorDark,
+    btnBackMenu,
+    btnRules,
+    btnDifficulty,
+    navItems,
+    btnSettingsBack,
+    btnStatsBack,
+    btnRulesBack,
+    btnDifficultyBack,
+    btnRuleBrazilian,
+    btnRuleAmerican,
+    btnDifficultyEasy,
+    btnDifficultyMedium,
+    btnDifficultyHard,
+    btnDifficultyExpert,
+    settingsForceCaptureEl,
+    btnNew,
+    btnUndo,
+    forceCaptureEl
+  },
+  actions: {
+    onOpenVsAi: () => {
+      refreshVsAiScreen();
+      showScreen('vsai');
+    },
+    onResumeMatch: () => {
+      if (!hasResumableMatch(lastGame)) {
+        alert('Nenhuma partida disponível para continuar.');
+        return;
+      }
+      startMatch({ resume: true });
+    },
+    onStartVsAiMatch: () => {
+      menuPrefs.mode = 'ai';
       saveSettings();
       emitGameEvent(GAME_EVENTS.SETTINGS_CHANGED, { key: 'mode', value: menuPrefs.mode });
+      startMatch();
+    },
+    onBackToMenu: backToMenu,
+    onShowOnlineSoon: () => showSoon('Modo online em breve.'),
+    onShowTournamentSoon: () => showSoon('Modo torneio em breve.'),
+    onShowFriendsSoon: () => showSoon('Modo jogar com amigos em breve.'),
+    onSetDifficulty: setMenuDifficulty,
+    onSetAiStarter: setAiStarter,
+    onSetRuleSet: setMenuRuleSet,
+    onSetPlayerColor: setPlayerColor,
+    onGameBackToMenu: () => {
+      resetNewMatchConfirm();
+      audioFeedback.playBack();
+      clearAiTimer();
+      showScreen('menu');
       persistLastGame();
-      return;
-    }
-
-    if (section === 'stats') {
+    },
+    onShowSettings: () => showScreen('settings'),
+    onTogglePvpMode: togglePvpMode,
+    onShowStats: () => {
       refreshStatsScreen();
       showScreen('stats');
-      return;
-    }
-
-    alert('Sessao em construcao.');
-  });
-});
-
-btnSettingsBack.addEventListener('click', () => {
-  audioFeedback.playBack();
-  showScreen('menu');
-});
-
-btnStatsBack.addEventListener('click', () => {
-  audioFeedback.playBack();
-  showScreen('menu');
-});
-
-btnRulesBack.addEventListener('click', () => {
-  audioFeedback.playBack();
-  showScreen('menu');
-});
-
-btnDifficultyBack.addEventListener('click', () => {
-  audioFeedback.playBack();
-  showScreen('menu');
-});
-
-btnRuleBrazilian.addEventListener('click', () => setMenuRuleSet('Brasileiro'));
-btnRuleAmerican.addEventListener('click', () => setMenuRuleSet('Americano'));
-btnDifficultyEasy.addEventListener('click', () => setMenuDifficulty('Facil'));
-btnDifficultyMedium.addEventListener('click', () => setMenuDifficulty('Medio'));
-btnDifficultyHard.addEventListener('click', () => setMenuDifficulty('Dificil'));
-btnDifficultyExpert?.addEventListener('click', () => setMenuDifficulty('Expert'));
-
-function registerMenuClickSound() {
-  const backIds = new Set([
-    'btn-back-menu',
-    'btn-vsai-back',
-    'btn-play-back',
-    'btn-settings-back',
-    'btn-stats-back',
-    'btn-rules-back',
-    'btn-difficulty-back'
-  ]);
-
-  document.addEventListener('click', (ev) => {
-    const target = ev.target;
-    if (!(target instanceof Element)) return;
-
-    const clickable = target.closest('button, input[type=\"checkbox\"], label.toggle');
-    if (!clickable) return;
-
-    unlockAudioIfNeeded();
-
-    if (clickable.classList.contains('cell') || clickable.closest('.board')) return;
-    if (clickable instanceof HTMLButtonElement && backIds.has(clickable.id)) return;
-
-    audioFeedback.playMenuClick();
-  });
-}
-
-function registerPlayCarouselSound() {
-  if (!playModesEl) return;
-
-  const tiles = [...playModesEl.querySelectorAll('.play-tile')];
-  if (tiles.length <= 1) return;
-
-  let activeIndex = 0;
-  let rafId = null;
-
-  function getClosestIndex() {
-    const modesRect = playModesEl.getBoundingClientRect();
-    const centerX = modesRect.left + (modesRect.width / 2);
-    let bestIndex = 0;
-    let bestDist = Number.POSITIVE_INFINITY;
-
-    tiles.forEach((tile, idx) => {
-      const rect = tile.getBoundingClientRect();
-      const tileCenter = rect.left + (rect.width / 2);
-      const dist = Math.abs(tileCenter - centerX);
-      if (dist < bestDist) {
-        bestDist = dist;
-        bestIndex = idx;
+    },
+    onShowSectionInConstruction: () => showSoon('Sessao em construcao.'),
+    onSettingsForceCaptureChange: () => applyForceCapture(settingsForceCaptureEl?.checked),
+    onNewMatch: requestNewMatchConfirmOrStart,
+    onUndo: () => {
+      if (isAiTurn()) return;
+      if (engine.undo()) {
+        clearSelection();
+        renderAll();
+        persistLastGame();
       }
-    });
-
-    return bestIndex;
+    },
+    onGameForceCaptureChange: () => applyForceCapture(forceCaptureEl?.checked)
   }
-
-  function syncActive({ withSound = false } = {}) {
-    const nextIndex = getClosestIndex();
-    if (nextIndex !== activeIndex) {
-      activeIndex = nextIndex;
-      if (withSound) audioFeedback.playBack();
-    }
-  }
-
-  requestAnimationFrame(() => syncActive({ withSound: false }));
-
-  playModesEl.addEventListener('scroll', () => {
-    if (rafId) return;
-    rafId = requestAnimationFrame(() => {
-      rafId = null;
-      syncActive({ withSound: true });
-    });
-  }, { passive: true });
-
-  window.addEventListener('resize', () => {
-    syncActive({ withSound: false });
-  }, { passive: true });
-}
-
-settingsForceCaptureEl.addEventListener('change', () => {
-  menuPrefs.forceCapture = settingsForceCaptureEl.checked;
-  forceCaptureEl.checked = settingsForceCaptureEl.checked;
-  engine.setForceCapture(menuPrefs.forceCapture);
-  clearSelection();
-  renderAll();
-  saveSettings();
-  emitGameEvent(GAME_EVENTS.SETTINGS_CHANGED, { key: 'forceCapture', value: menuPrefs.forceCapture });
-  persistLastGame();
-});
-
-btnNew.addEventListener('click', () => {
-  startMatch();
-});
-
-btnUndo.addEventListener('click', () => {
-  if (isAiTurn()) return;
-
-  if (engine.undo()) {
-    clearSelection();
-    renderAll();
-    persistLastGame();
-  }
-});
-
-forceCaptureEl.addEventListener('change', () => {
-  menuPrefs.forceCapture = forceCaptureEl.checked;
-  settingsForceCaptureEl.checked = forceCaptureEl.checked;
-  engine.setForceCapture(menuPrefs.forceCapture);
-  clearSelection();
-  renderAll();
-  saveSettings();
-  emitGameEvent(GAME_EVENTS.SETTINGS_CHANGED, { key: 'forceCapture', value: menuPrefs.forceCapture });
-  persistLastGame();
 });
 
 eventBus.on(GAME_EVENTS.SYNC_INBOUND_EVENT, (_envelope) => {
@@ -1029,8 +888,8 @@ window.addEventListener('keydown', unlockAudioIfNeeded, { capture: true, passive
 
 boardUI.mount();
 setupPlayIntroStagger();
-registerMenuClickSound();
-registerPlayCarouselSound();
+registerMenuClickSound({ audioFeedback, unlockAudioIfNeeded });
+registerPlayCarouselSound({ playModesEl, audioFeedback });
 refreshMenuButtons();
 refreshRulesScreen();
 refreshDifficultyScreen();

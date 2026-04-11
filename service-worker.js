@@ -1,4 +1,4 @@
-﻿const CACHE_NAME = 'damas-pro-arena-v68';
+﻿const CACHE_NAME = 'damas-pro-arena-v79';
 const APP_SHELL = [
   './',
   './index.html',
@@ -11,9 +11,13 @@ const APP_SHELL = [
   './js/modules/core/event-bus.js',
   './js/modules/core/turn-flow.js',
   './js/modules/core/game-events.js',
+  './js/modules/core/ai-turn-controller.js',
+  './js/modules/core/match-utils.js',
   './js/modules/core/sync-coordinator.js',
   './js/modules/ai/minimax-ai.js',
   './js/modules/ui/board-ui.js',
+  './js/modules/ui/interaction-bindings.js',
+  './js/modules/ui/app-event-bindings.js',
   './js/modules/feedback/audio-feedback.js',
   './js/modules/feedback/haptics-feedback.js',
   './assets/img/piece-white.svg',
@@ -65,13 +69,28 @@ self.addEventListener('activate', (event) => {
 self.addEventListener('fetch', (event) => {
   if (event.request.method !== 'GET') return;
 
-  event.respondWith((async () => {
-    const cached = await caches.match(event.request);
-    if (cached) return cached;
+  const reqUrl = new URL(event.request.url);
+  if (reqUrl.origin !== self.location.origin) return;
 
-    const response = await fetch(event.request);
-    const cache = await caches.open(CACHE_NAME);
-    cache.put(event.request, response.clone());
-    return response;
+  event.respondWith((async () => {
+    const isNavigation = event.request.mode === 'navigate';
+    const cached = await caches.match(event.request, { ignoreSearch: false });
+    if (cached && !isNavigation) return cached;
+
+    try {
+      const response = await fetch(event.request);
+      if (response && response.ok) {
+        const cache = await caches.open(CACHE_NAME);
+        cache.put(event.request, response.clone());
+      }
+      return response;
+    } catch {
+      if (cached) return cached;
+      if (isNavigation) {
+        const offlineShell = await caches.match('./index.html');
+        if (offlineShell) return offlineShell;
+      }
+      throw new Error('Network request failed and no cache was available.');
+    }
   })());
 });

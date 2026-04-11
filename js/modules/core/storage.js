@@ -48,11 +48,19 @@ function safeParse(raw, fallback) {
 }
 
 function load(key, fallback) {
-  return safeParse(localStorage.getItem(key), fallback);
+  try {
+    return safeParse(localStorage.getItem(key), fallback);
+  } catch {
+    return fallback;
+  }
 }
 
 function save(key, value) {
-  localStorage.setItem(key, JSON.stringify(value));
+  try {
+    localStorage.setItem(key, JSON.stringify(value));
+  } catch {
+    return value;
+  }
   return value;
 }
 
@@ -193,7 +201,11 @@ export function createStorageService() {
     },
 
     clearLastGame() {
-      localStorage.removeItem(KEYS.lastGame);
+      try {
+        localStorage.removeItem(KEYS.lastGame);
+      } catch {
+        // Ignore storage failures to keep app flow running.
+      }
     }
   };
 }
